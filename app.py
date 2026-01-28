@@ -1,53 +1,43 @@
-
-import os
-import sys
-
-# Force-install dependencies on Streamlit Cloud if missing
-try:
-    import transformers
-except:
-    os.system("pip install transformers sentencepiece accelerate")
-
-try:
-    import faster_whisper
-except:
-    os.system("pip install faster-whisper")
-
-try:
-    import torch
-except:
-    os.system("pip install torch")
-
-
 import streamlit as st
 import tempfile
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import re
 from faster_whisper import WhisperModel
 
 st.set_page_config(page_title="Lecture Voice-to-Notes", layout="wide")
 
-# ---------- Load Models ----------
+# ---------- Load Model ----------
 @st.cache_resource
-def load_models():
-    stt = WhisperModel("base", compute_type="int8")
-    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-small")
-    model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-small")
-    return stt, tokenizer, model
+def load_model():
+    return WhisperModel("base", compute_type="int8")
 
-stt_model, tokenizer, gen_model = load_models()
+stt_model = load_model()
 
-# ---------- Helpers ----------
-def generate_with_prompt(prompt, text):
-    chunks = [text[i:i+900] for i in range(0, len(text), 900)]
-    outputs = []
+# ---------- Simple Generators ----------
+def make_notes(text):
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    notes = []
+    for s in sentences[:25]:
+        if len(s.strip()) > 15:
+            notes.append("• " + s.strip())
+    return "\n".join(notes)
 
-    for ch in chunks:
-        input_text = prompt + "\n\n" + ch
-        inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=1024)
-        out = gen_model.generate(**inputs, max_new_tokens=250, do_sample=False)
-        outputs.append(tokenizer.decode(out[0], skip_special_tokens=True))
+def make_quiz(text):
+    keywords = list(set(re.findall(r"\b[A-Za-z]{5,}\b", text)))[:5]
+    quiz = []
+    for i, k in enumerate(keywords, 1):
+        quiz.append(
+            f"Q{i}: What is related to '{k}'?\n"
+            f"A) Concept\nB) Object\nC) Process\nD) None\n"
+            f"Correct: A\n"
+        )
+    return "\n".join(quiz)
 
-    return "\n".join(outputs)
+def make_flashcards(text):
+    words = list(set(re.findall(r"\b[A-Za-z]{6,}\b", text)))[:6]
+    cards = []
+    for w in words:
+        cards.append(f"Q: What is {w}?\nA: {w} is an important concept discussed in the lecture.\n")
+    return "\n".join(cards)
 
 # ---------- Sidebar ----------
 st.sidebar.title("Navigation")
@@ -56,17 +46,17 @@ page = st.sidebar.radio("Go to", ["Home", "Notes", "Quiz", "Flashcards"])
 # ---------- Session State ----------
 if "transcript" not in st.session_state:
     st.session_state.transcript = ""
-if "quiz_text" not in st.session_state:
-    st.session_state.quiz_text = ""
-if "notes_text" not in st.session_state:
-    st.session_state.notes_text = ""
-if "flash_text" not in st.session_state:
-    st.session_state.flash_text = ""
+if "notes" not in st.session_state:
+    st.session_state.notes = ""
+if "quiz" not in st.session_state:
+    st.session_state.quiz = ""
+if "flash" not in st.session_state:
+    st.session_state.flash = ""
 
 # ---------- Home ----------
 if page == "Home":
     st.title("Lecture Voice-to-Notes Generator")
-    st.write("Upload a lecture audio and turn it into notes, quizzes, and flashcards.")
+    st.write("Upload a lecture audio and convert it into notes, quizzes, and flashcards.")
 
     audio_file = st.file_uploader("Upload lecture audio (.mp3 or .wav)", type=["mp3", "wav"])
     if audio_file:
@@ -75,73 +65,48 @@ if page == "Home":
             temp_audio_path = tmp.name
 
         st.info("Transcribing audio...")
-
         try:
             segments, info = stt_model.transcribe(temp_audio_path)
-            text = " ".join([seg.text for seg in segments])
-            st.session_state.transcript = text.strip()
-
-            if not st.session_state.transcript:
-                st.error("The audio seems to be empty or unclear. Please upload a clearer lecture.")
+            text = " ".join([seg.text for seg in segments]).strip()
+            if not text:
+                st.error("Audio could not be transcribed. Please try a clearer lecture.")
             else:
-                st.success("Lecture transcribed! Go to Notes / Quiz / Flashcards from the sidebar.")
+                st.session_state.transcript = text
+                st.success("Lecture transcribed successfully!")
                 with st.expander("View Transcript"):
-                    st.text_area("", st.session_state.transcript, height=220)
-
+                    st.text_area("", text, height=220)
         except Exception:
-            st.error("Could not process this audio file. Please try another lecture recording.")
+            st.error("Could not process this audio file.")
 
 # ---------- Notes ----------
 if page == "Notes":
-    st.title("Notes Generator")
+    st.title("Study Notes")
     if not st.session_state.transcript:
         st.warning("Upload audio on Home page first.")
     else:
-        st.text_area("Transcript", st.session_state.transcript, height=180)
         if st.button("Generate Notes"):
-            prompt = (
-                "Convert the following lecture into simple, student-friendly notes.\n"
-                "Use bullet points and small headings.\n"
-                "Avoid robotic or formal language.\n"
-                "Write like a helpful classmate explaining."
-            )
-            st.session_state.notes_text = generate_with_prompt(prompt, st.session_state.transcript)
-
-        if st.session_state.notes_text:
-            st.subheader("Study Notes")
-            st.text_area("", st.session_state.notes_text, height=260)
+            st.session_state.notes = make_notes(st.session_state.transcript)
+        if st.session_state.notes:
+            st.text_area("", st.session_state.notes, height=350)
 
 # ---------- Quiz ----------
 if page == "Quiz":
-    st.title("Quiz Generator")
+    st.title("Quiz")
     if not st.session_state.transcript:
         st.warning("Upload audio on Home page first.")
     else:
         if st.button("Generate Quiz"):
-            prompt = (
-                "Create 5 multiple-choice questions from this lecture.\n"
-                "Include options and the correct answer for each.\n"
-                "Keep it simple and student-friendly."
-            )
-            st.session_state.quiz_text = generate_with_prompt(prompt, st.session_state.transcript)
-
-        if st.session_state.quiz_text:
-            st.subheader("Generated Quiz")
-            st.text_area("", st.session_state.quiz_text, height=350)
+            st.session_state.quiz = make_quiz(st.session_state.transcript)
+        if st.session_state.quiz:
+            st.text_area("", st.session_state.quiz, height=350)
 
 # ---------- Flashcards ----------
 if page == "Flashcards":
-    st.title("Flashcards Generator")
+    st.title("Flashcards")
     if not st.session_state.transcript:
         st.warning("Upload audio on Home page first.")
     else:
         if st.button("Generate Flashcards"):
-            prompt = (
-                "Create short flashcards from this lecture.\n"
-                "Each flashcard should have a question and a short answer."
-            )
-            st.session_state.flash_text = generate_with_prompt(prompt, st.session_state.transcript)
-
-        if st.session_state.flash_text:
-            st.subheader("Generated Flashcards")
-            st.text_area("", st.session_state.flash_text, height=350)
+            st.session_state.flash = make_flashcards(st.session_state.transcript)
+        if st.session_state.flash:
+            st.text_area("", st.session_state.flash, height=350)
