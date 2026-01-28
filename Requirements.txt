@@ -2,4 +2,6 @@ streamlit
 faster-whisper
 transformers
 torch
+sentencepiece
+accelerate
 ffmpeg-python
