@@ -1,3 +1,24 @@
+
+import os
+import sys
+
+# Force-install dependencies on Streamlit Cloud if missing
+try:
+    import transformers
+except:
+    os.system("pip install transformers sentencepiece accelerate")
+
+try:
+    import faster_whisper
+except:
+    os.system("pip install faster-whisper")
+
+try:
+    import torch
+except:
+    os.system("pip install torch")
+
+
 import streamlit as st
 import tempfile
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
