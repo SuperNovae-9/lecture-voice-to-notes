@@ -1,14 +1,14 @@
 import streamlit as st
-import whisper
 import tempfile
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from faster_whisper import WhisperModel
 
 st.set_page_config(page_title="Lecture Voice-to-Notes", layout="wide")
 
 # ---------- Load Models ----------
 @st.cache_resource
 def load_models():
-    stt = whisper.load_model("base")
+    stt = WhisperModel("base", compute_type="int8")
     tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-small")
     model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-small")
     return stt, tokenizer, model
@@ -56,8 +56,9 @@ if page == "Home":
         st.info("Transcribing audio...")
 
         try:
-            result = stt_model.transcribe(temp_audio_path)
-            st.session_state.transcript = result.get("text", "").strip()
+            segments, info = stt_model.transcribe(temp_audio_path)
+            text = " ".join([seg.text for seg in segments])
+            st.session_state.transcript = text.strip()
 
             if not st.session_state.transcript:
                 st.error("The audio seems to be empty or unclear. Please upload a clearer lecture.")
